@@ -1,4 +1,4 @@
-Shader "Missnish/FlowMap"
+Shader "Missnish/FlowWater"
 {
     Properties
     {
