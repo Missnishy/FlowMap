@@ -1,4 +1,4 @@
-Shader "Missnish/MoveUV"
+Shader "Missnish/FlowMap"
 {
     Properties
     {
@@ -123,13 +123,21 @@ Shader "Missnish/MoveUV"
                 return resultF;
             }
 
-            //_FlowMap
-            float3 FlowMap(sampler2D FlowMap, sampler2D Albedo, float2 uv)
+            float3 TexBlend(sampler2D tex, float2 uv1, float2 uv2, float mask)
             {
+                float3 blendRes1 = tex2D(tex, uv1);
+                float3 blendRes2 = tex2D(tex, uv2);
+                return lerp(blendRes1, blendRes2, mask);
+            }
+
+
+            //-----------------------Fragment Shader-----------------------
+            fixed4 frag (v2f i) : SV_Target
+            {
+                //FlowMap
                 //float2 uvNew = i.uv + float2(0.0, _Speed * _Time.x);
                 //float3 finalRGB = tex2D(_MainTex, uvNew);
-
-                float2 flowDir = tex2D(FlowMap, uv).xy;                  //从FlowMap图中采样RG通道作为偏移向量
+                float2 flowDir = tex2D(_FlowMap, i.uv).xy;                  //从FlowMap图中采样RG通道作为偏移向量
                 flowDir = (flowDir - 0.5) * 2.0;                            //将采样结果从[0, 1] → [-1, 1]
 
                 //构造周期相同，但有半个相位偏差的函数
@@ -138,26 +146,21 @@ Shader "Missnish/MoveUV"
                 float flowBlend = abs((phase1 - 0.5) * 2.0);                //oscillating(权重值?) - 用作 Mask 混合两次采样的结果
 
                 //构造偏移后的uv
-                float2 uvFlow1 = uv + (flowDir * phase1 * _Intensity);
-                float2 uvFlow2 = uv + (flowDir * phase2 * _Intensity);
+                float2 uvFlow1 = i.uv + (flowDir * phase1 * _Intensity);
+                float2 uvFlow2 = i.uv + (flowDir * phase2 * _Intensity);
                 
                 //对MainTex采样两次
-                float3 flowRes1 = tex2D(Albedo, uvFlow1);
-                float3 flowRes2 = tex2D(Albedo, uvFlow2);
+                //float3 flowRes1 = tex2D(_MainTex, uvFlow1);
+                //float3 flowRes2 = tex2D(_MainTex, uvFlow2);
 
                 //将采样结果进行混合
-                return lerp(flowRes1, flowRes2, flowBlend);
-
-            }
-
-
-            //-----------------------Fragment Shader-----------------------
-            fixed4 frag (v2f i) : SV_Target
-            {
+                float3 flowColor =  TexBlend(_MainTex, uvFlow1, uvFlow2, flowBlend);
 
                 //数据准备
-                float4 normalMap = (tex2D(_NormalTex, i.uv));
-                float3 normalData = UnpackNormal(normalMap);          //对法线数据进行解码，将压缩的法线数据从[0,1]恢复成[-1,1]
+                //float3 normalData = UnpackNormal(tex2D(_NormalTex, i.uv));            //对法线数据进行解码，将压缩的法线数据从[0,1]恢复成[-1,1]
+                float3 normalData1 = UnpackNormal(tex2D(_NormalTex, uvFlow1));
+                float3 normalData2 = UnpackNormal(tex2D(_NormalTex, uvFlow2));
+                float3 normalData =  lerp(normalData1, normalData2, flowBlend);         //法线混合
                 normalData.xy *= _NormalIntensity;
                 float3x3 TBN = float3x3(i.tangent, i.binormal, i.normal);
                 float3 normalDir = normalize(mul(normalData.xyz, TBN));
@@ -168,10 +171,13 @@ Shader "Missnish/MoveUV"
 
                 float3 lightColor = _LightColor0.rgb;
                 //float3 baseColor = _Color * tex2D(_MainTex, i.uv);
-                float3 baseColor = _Color * pow(FlowMap(_FlowMap, _MainTex, i.uv), 2.2);
-                float roughness = tex2D(_Roughness, i.uv);
-                float metalness = tex2D(_MetallicTex, i.uv);
-                float aoMap = tex2D(_AOTex, i.uv);    
+                float3 baseColor = _Color * pow(flowColor, 2.2);
+                //float roughness = tex2D(_Roughness, i.uv);
+                float roughness = TexBlend(_Roughness, uvFlow1, uvFlow2, flowBlend);
+                //float metalness = tex2D(_MetallicTex, i.uv);
+                float metalness = TexBlend(_MetallicTex, uvFlow1, uvFlow2, flowBlend);
+                //float aoMap = tex2D(_AOTex, i.uv);
+                float aoMap = TexBlend(_AOTex, uvFlow1, uvFlow2, flowBlend);
                 float ao = lerp(1, aoMap, _AOIntensity);
 
                 float NdotH = max(0.00001, dot(normalDir, halfDir));
